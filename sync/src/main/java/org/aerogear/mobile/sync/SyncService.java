@@ -8,12 +8,14 @@ import org.jetbrains.annotations.NotNull;
 
 import com.apollographql.apollo.ApolloCall;
 import com.apollographql.apollo.ApolloClient;
+import com.apollographql.apollo.ApolloQueryCall;
 import com.apollographql.apollo.ApolloSubscriptionCall;
 import com.apollographql.apollo.api.Mutation;
 import com.apollographql.apollo.api.Operation;
 import com.apollographql.apollo.api.Query;
 import com.apollographql.apollo.api.Response;
 import com.apollographql.apollo.api.Subscription;
+import com.apollographql.apollo.api.cache.http.HttpCachePolicy;
 import com.apollographql.apollo.exception.ApolloException;
 import com.apollographql.apollo.subscription.WebSocketSubscriptionTransport.Factory;
 
@@ -74,10 +76,16 @@ public final class SyncService {
 
         private final ApolloClient apolloClient;
         private final Query query;
+        private HttpCachePolicy.Policy httpCachePolicy;
 
         SyncQuery(ApolloClient apolloClient, Query query) {
             this.apolloClient = apolloClient;
             this.query = query;
+        }
+
+        public SyncQuery withHttpCachePolicy(@Nonnull HttpCachePolicy.Policy httpCachePolicy) {
+            this.httpCachePolicy = nonNull(httpCachePolicy, "httpCachePolicy");
+            return this;
         }
 
         public <T extends Operation.Data> Request<Response<T>> execute(
@@ -85,18 +93,25 @@ public final class SyncService {
 
             nonNull(responseDataClass, "responseDataClass");
 
-            return Requester.call((Responder<Response<T>> requestCallback) -> apolloClient
-                            .query(query).enqueue(new ApolloCall.Callback<T>() {
-                                @Override
-                                public void onResponse(@Nonnull Response<T> response) {
-                                    requestCallback.onResult(response);
-                                }
+            return Requester.call((Responder<Response<T>> requestCallback) -> {
+                ApolloQueryCall query = apolloClient.query(this.query);
 
-                                @Override
-                                public void onFailure(@Nonnull ApolloException e) {
-                                    requestCallback.onException(e);
-                                }
-                            })).respondOn(new AppExecutors().networkThread());
+                if (httpCachePolicy != null) {
+                    query.httpCachePolicy(httpCachePolicy);
+                }
+
+                query.enqueue(new ApolloCall.Callback<T>() {
+                    @Override
+                    public void onResponse(@Nonnull Response<T> response) {
+                        requestCallback.onResult(response);
+                    }
+
+                    @Override
+                    public void onFailure(@Nonnull ApolloException e) {
+                        requestCallback.onException(e);
+                    }
+                });
+            }).respondOn(new AppExecutors().networkThread());
 
         }
 
